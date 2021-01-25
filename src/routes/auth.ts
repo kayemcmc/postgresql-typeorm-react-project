@@ -1,6 +1,12 @@
-import { json, Request, Response, Router } from "express"
-import { validate } from 'class-validator'
+import { json, Request, response, Response, Router } from "express"
+import { isEmpty, validate } from "class-validator"
+import bcrypt from "bcrypt"
+import jwt from "jsonwebtoken"
+import cookie from "cookie"
+
 import { User } from '../entities/User'
+
+//base62 secure token
 
 const register = async (req: Request, res: Response) => {
    const {email, username, password} = req.body
@@ -31,7 +37,70 @@ const register = async (req: Request, res: Response) => {
    }
 }
 
+// login route takes a username and a password
+// look in the database to see if user exists if not
+// we will return an error
+// if there is then we compare the password and carry 
+// on with auth
+const login = async (req: Request, res: Response) => {
+
+    const {username, password} = req.body
+
+    try {
+        let errors: any = {}
+  
+        const user = await User.findOne({ username })
+
+        if(isEmpty(username)) errors.username = "Username cannot be empty"
+        if(isEmpty(password)) errors.password = "Password cannot be empty"
+
+        if(Object.keys(errors).length > 0) {
+            return res.status(400).json(errors)
+        }
+
+        if (!user) return res.status(404).json({ user: 'User not found' })
+
+        const passwordMatch = await bcrypt.compare(password, user.password)
+
+        if(!passwordMatch) res.status(401).json({ password: "Password is incorrect, try again"})
+        const token = jwt.sign({ username }, process.env.JWT_SECRET)
+        res.set('Set-Cookie', cookie.serialize('token', token, {
+            httpOnly: true,
+            //TODO make true for https
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            // 1 hour
+            maxAge: 3600,
+            // the whole site
+            path: '/'
+        }))
+        return res.json(user)
+        // password is correct generate a json webtoken
+        // sent to the users machine for the machine to tell the server user is logged in
+    } catch (err) {
+
+    }
+}
+
+const me = async (req: Request, res: Response) => {
+    try {
+        const token = req.cookies.token
+        if(!token) throw new Error('Unathenticated')
+
+        const { username }: any = jwt.verify(token, process.env.JWT_SECRET)
+
+        const user = await User.findOne({ username })
+        if(!user) throw new Error('Unathenticated')
+
+        return res.json(user)
+    } catch (err) {
+        console.log(err)
+        return res.status(401).json({ error: err.message })
+    }
+}
 const router = Router()
 router.post('/register', register)
+router.post('/login', login)
+router.post('/me', me)
 
 export default router;
