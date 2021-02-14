@@ -4,7 +4,8 @@ import bcrypt from "bcrypt"
 import jwt from "jsonwebtoken"
 import cookie from "cookie"
 
-import { User } from '../entities/User'
+import User from '../entities/User'
+import auth from '../middleware/auth'
 
 //base62 secure token
 
@@ -63,8 +64,10 @@ const login = async (req: Request, res: Response) => {
         const passwordMatch = await bcrypt.compare(password, user.password)
 
         if(!passwordMatch) res.status(401).json({ password: "Password is incorrect, try again"})
+        // store in payload with .sign
         const token = jwt.sign({ username }, process.env.JWT_SECRET)
         res.set('Set-Cookie', cookie.serialize('token', token, {
+            // cannot access by js
             httpOnly: true,
             //TODO make true for https
             secure: process.env.NODE_ENV === 'production',
@@ -82,25 +85,29 @@ const login = async (req: Request, res: Response) => {
     }
 }
 
-const me = async (req: Request, res: Response) => {
-    try {
-        const token = req.cookies.token
-        if(!token) throw new Error('Unathenticated')
+const me =  (_: Request, res: Response) => {
+  return res.json(res.locals.user)
+}
 
-        const { username }: any = jwt.verify(token, process.env.JWT_SECRET)
-
-        const user = await User.findOne({ username })
-        if(!user) throw new Error('Unathenticated')
-
-        return res.json(user)
-    } catch (err) {
-        console.log(err)
-        return res.status(401).json({ error: err.message })
-    }
+const logout = (_: Request, res: Response) => {
+    //expire date is expired
+    res.set('Set-Cookie', cookie.serialize('token', '', {
+      // cannot access by js
+      httpOnly: true,
+      //TODO make true for https
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      // 1 hour
+      expires: new Date(0),
+      // the whole site
+      path: '/'  
+    }))
+    return res.status(200).json({ success: true })
 }
 const router = Router()
 router.post('/register', register)
 router.post('/login', login)
-router.post('/me', me)
+router.get('/me', auth, me)
+router.get('/logout', auth, logout)
 
 export default router;
